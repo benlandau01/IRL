@@ -6,11 +6,19 @@ import {
   FlatList,
   RefreshControl,
   StyleSheet,
+  Switch,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { fetchNearbyCheckIns, fuzzCoordinate, insertCheckIn, type CheckInRow } from '../../lib/checkIns';
+import {
+  fetchNearbyCheckIns,
+  fuzzCoordinate,
+  insertCheckIn,
+  updateCheckInNote,
+  type CheckInRow,
+} from '../../lib/checkIns';
 import { describeError } from '../../lib/errors';
 import { haversineMeters } from '../../lib/geo';
 
@@ -27,8 +35,12 @@ function timeAgo(timestamp: string): string {
 }
 
 export default function NearbyScreen() {
+  const [shareWithEveryone, setShareWithEveryone] = useState(false);
   const [checkingIn, setCheckingIn] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [pendingCheckInId, setPendingCheckInId] = useState<string | null>(null);
+  const [note, setNote] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -75,8 +87,10 @@ export default function NearbyScreen() {
       }
       const position = await Location.getCurrentPositionAsync({});
       const fuzzed = fuzzCoordinate(position.coords.latitude, position.coords.longitude);
-      await insertCheckIn(fuzzed);
+      const checkIn = await insertCheckIn(fuzzed, shareWithEveryone ? 'everyone' : 'friends');
       setStatus('Checked in!');
+      setPendingCheckInId(checkIn.id);
+      setNote('');
       load();
     } catch (err) {
       setStatus(describeError(err));
@@ -85,8 +99,25 @@ export default function NearbyScreen() {
     }
   }
 
+  async function handleSaveNote() {
+    if (!pendingCheckInId) return;
+    setSavingNote(true);
+    try {
+      await updateCheckInNote(pendingCheckInId, note.trim());
+      setPendingCheckInId(null);
+    } catch (err) {
+      setStatus(describeError(err));
+    } finally {
+      setSavingNote(false);
+    }
+  }
+
   return (
     <View style={styles.container}>
+      <View style={styles.visibilityRow}>
+        <Text style={styles.visibilityLabel}>Share with everyone nearby</Text>
+        <Switch value={shareWithEveryone} onValueChange={setShareWithEveryone} />
+      </View>
       <TouchableOpacity
         style={[styles.checkInButton, checkingIn && styles.checkInButtonDisabled]}
         onPress={handleCheckIn}
@@ -99,6 +130,33 @@ export default function NearbyScreen() {
         )}
       </TouchableOpacity>
       {status && <Text style={styles.status}>{status}</Text>}
+      {pendingCheckInId && (
+        <View style={styles.notePrompt}>
+          <Text style={styles.noteLabel}>What happened?</Text>
+          <TextInput
+            style={styles.noteInput}
+            placeholder="Grabbed coffee, said hi to a stranger…"
+            value={note}
+            onChangeText={setNote}
+          />
+          <View style={styles.noteButtons}>
+            <TouchableOpacity onPress={() => setPendingCheckInId(null)} style={styles.noteSkip}>
+              <Text style={styles.noteSkipText}>Skip</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleSaveNote}
+              disabled={savingNote || !note.trim()}
+              style={[styles.noteSave, (savingNote || !note.trim()) && styles.checkInButtonDisabled]}
+            >
+              {savingNote ? (
+                <ActivityIndicator color="#FFF" />
+              ) : (
+                <Text style={styles.noteSaveText}>Save</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
       {loading ? (
         <ActivityIndicator style={styles.loading} />
       ) : (
@@ -149,6 +207,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  visibilityRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginTop: 12,
+  },
+  visibilityLabel: {
+    fontSize: 14,
+    color: '#444',
+  },
   checkInButton: {
     backgroundColor: '#1A1A1A',
     margin: 16,
@@ -169,6 +238,47 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: '#666',
     marginBottom: 8,
+  },
+  notePrompt: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#F7F7F7',
+    gap: 8,
+  },
+  noteLabel: {
+    fontWeight: '600',
+  },
+  noteInput: {
+    borderWidth: 1,
+    borderColor: '#DDD',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#FFF',
+  },
+  noteButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  noteSkip: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  noteSkipText: {
+    color: '#666',
+  },
+  noteSave: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  noteSaveText: {
+    color: '#FFF',
+    fontWeight: '600',
   },
   loading: {
     marginTop: 24,

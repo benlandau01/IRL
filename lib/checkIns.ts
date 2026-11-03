@@ -23,19 +23,30 @@ export function fuzzCoordinate(lat: number, lng: number, meters = 100) {
   return { lat: lat + deltaLat, lng: lng + deltaLng };
 }
 
-export async function insertCheckIn(coords: { lat: number; lng: number }) {
+export async function insertCheckIn(
+  coords: { lat: number; lng: number },
+  visibility: 'friends' | 'everyone' = 'friends'
+): Promise<CheckInRow> {
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError) throw userError;
   if (!userData.user) throw new Error('Not signed in');
 
-  const { error } = await supabase.from('check_ins').insert({
-    user_id: userData.user.id,
-    lat: coords.lat,
-    lng: coords.lng,
-    // Placeholder until Phase 4 adds real friend relationships — 'friends'
-    // visibility would otherwise mean no one but the owner ever sees a row.
-    visibility: 'everyone',
-  });
+  const { data, error } = await supabase
+    .from('check_ins')
+    .insert({
+      user_id: userData.user.id,
+      lat: coords.lat,
+      lng: coords.lng,
+      visibility,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateCheckInNote(id: string, note: string): Promise<void> {
+  const { error } = await supabase.from('check_ins').update({ note }).eq('id', id);
   if (error) throw error;
 }
 
