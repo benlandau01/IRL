@@ -10,7 +10,9 @@
       "WebFetch(domain:supabase.com)",
       "WebFetch(domain:api.supabase.com)",
       "WebFetch(domain:docs.expo.dev)",
-      "Bash(gh auth *)"
+      "Bash(git commit -m ' *)",
+      "Bash(git remote *)",
+      "Bash(git push *)"
     ]
   },
   "enabledPlugins": {

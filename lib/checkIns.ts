@@ -32,6 +32,9 @@ export async function insertCheckIn(coords: { lat: number; lng: number }) {
     user_id: userData.user.id,
     lat: coords.lat,
     lng: coords.lng,
+    // Placeholder until Phase 4 adds real friend relationships — 'friends'
+    // visibility would otherwise mean no one but the owner ever sees a row.
+    visibility: 'everyone',
   });
   if (error) throw error;
 }
@@ -41,6 +44,20 @@ export async function fetchMyHistory(): Promise<CheckInRow[]> {
     .from('check_ins')
     .select('*')
     .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function fetchNearbyCheckIns(): Promise<CheckInRow[]> {
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError) throw userError;
+  if (!userData.user) throw new Error('Not signed in');
+
+  const { data, error } = await supabase
+    .from('check_ins')
+    .select('*')
+    .eq('visibility', 'everyone')
+    .neq('user_id', userData.user.id);
   if (error) throw error;
   return data ?? [];
 }

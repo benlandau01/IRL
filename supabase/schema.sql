@@ -17,6 +17,11 @@ create policy "select own check-ins" on check_ins
 create policy "insert own check-ins" on check_ins
   for insert with check (auth.uid() = user_id);
 
+-- Lets the Nearby tab see other users' public check-ins. Temporary stand-in
+-- for real friends-only visibility, which arrives in Phase 4.
+create policy "select everyone-visible check-ins" on check_ins
+  for select using (visibility = 'everyone' and expires_at > now());
+
 -- RLS policies only filter rows — they don't substitute for the base table
 -- grant, which the SQL editor doesn't set up automatically (unlike creating
 -- a table through the Table Editor UI, which grants this for you).
