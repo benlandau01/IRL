@@ -1,4 +1,4 @@
-import { Tabs } from 'expo-router';
+import { Tabs, useRouter } from 'expo-router';
 import { Text, TouchableOpacity } from 'react-native';
 import { useSession } from '../../lib/auth-context';
 
@@ -8,8 +8,18 @@ function TabIcon({ emoji }: { emoji: string }) {
 
 function SignOutButton() {
   const { signOut } = useSession();
+  const router = useRouter();
+
+  async function handleSignOut() {
+    await signOut();
+    // Stack.Protected swapping out a whole nested navigator (this Tabs
+    // group) on a guard change doesn't always reconcile cleanly on its
+    // own — force a clean reset back to the root instead of waiting.
+    router.replace('/');
+  }
+
   return (
-    <TouchableOpacity onPress={() => signOut()} style={{ paddingHorizontal: 16 }}>
+    <TouchableOpacity onPress={handleSignOut} style={{ paddingHorizontal: 16 }}>
       <Text style={{ color: '#C0392B', fontSize: 14 }}>Sign out</Text>
     </TouchableOpacity>
   );
