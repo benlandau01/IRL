@@ -1,5 +1,12 @@
 import { StyleSheet, Text, View } from 'react-native';
-import type { CheckIn } from '../data/mockCheckIns';
+
+export type CheckInCardData = {
+  userName: string;
+  initials: string;
+  avatarColor: string;
+  timestamp: string;
+  note?: string | null;
+};
 
 function timeAgo(timestamp: string): string {
   const diffMs = Date.now() - new Date(timestamp).getTime();
@@ -9,7 +16,7 @@ function timeAgo(timestamp: string): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
-export default function CheckInCard({ checkIn }: { checkIn: CheckIn }) {
+export default function CheckInCard({ checkIn }: { checkIn: CheckInCardData }) {
   return (
     <View style={styles.card}>
       <View style={[styles.avatar, { backgroundColor: checkIn.avatarColor }]}>
@@ -20,7 +27,7 @@ export default function CheckInCard({ checkIn }: { checkIn: CheckIn }) {
           <Text style={styles.name}>{checkIn.userName}</Text>
           <Text style={styles.time}>{timeAgo(checkIn.timestamp)}</Text>
         </View>
-        <Text style={styles.note}>{checkIn.note}</Text>
+        <Text style={styles.note}>{checkIn.note ?? 'Checked in'}</Text>
       </View>
     </View>
   );

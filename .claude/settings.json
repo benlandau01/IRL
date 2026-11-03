@@ -1,4 +1,18 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(npx expo *)",
+      "Bash(git status *)",
+      "Bash(git mv *)",
+      "Bash(lsof *)",
+      "Bash(xargs -r kill)",
+      "Read(//tmp/**)",
+      "WebFetch(domain:supabase.com)",
+      "WebFetch(domain:api.supabase.com)",
+      "WebFetch(domain:docs.expo.dev)",
+      "Bash(gh auth *)"
+    ]
+  },
   "enabledPlugins": {
     "expo@claude-plugins-official": true
   }

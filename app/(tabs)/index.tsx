@@ -1,10 +1,56 @@
+import * as Location from 'expo-location';
+import { useState } from 'react';
 import MapView, { Marker } from 'react-native-maps';
-import { FlatList, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  FlatList,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { MOCK_USER_LOCATION, nearbyCheckIns } from '../../data/mockCheckIns';
+import { fuzzCoordinate, insertCheckIn } from '../../lib/checkIns';
+import { describeError } from '../../lib/errors';
 
 export default function NearbyScreen() {
+  const [checkingIn, setCheckingIn] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  async function handleCheckIn() {
+    setStatus(null);
+    setCheckingIn(true);
+    try {
+      const { status: permissionStatus } = await Location.requestForegroundPermissionsAsync();
+      if (permissionStatus !== 'granted') {
+        setStatus('Location permission denied');
+        return;
+      }
+      const position = await Location.getCurrentPositionAsync({});
+      const fuzzed = fuzzCoordinate(position.coords.latitude, position.coords.longitude);
+      await insertCheckIn(fuzzed);
+      setStatus('Checked in!');
+    } catch (err) {
+      setStatus(describeError(err));
+    } finally {
+      setCheckingIn(false);
+    }
+  }
+
   return (
     <View style={styles.container}>
+      <TouchableOpacity
+        style={[styles.checkInButton, checkingIn && styles.checkInButtonDisabled]}
+        onPress={handleCheckIn}
+        disabled={checkingIn}
+      >
+        {checkingIn ? (
+          <ActivityIndicator color="#FFF" />
+        ) : (
+          <Text style={styles.checkInButtonText}>Check in</Text>
+        )}
+      </TouchableOpacity>
+      {status && <Text style={styles.status}>{status}</Text>}
       <MapView
         style={styles.map}
         initialRegion={{
@@ -41,6 +87,27 @@ export default function NearbyScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  checkInButton: {
+    backgroundColor: '#1A1A1A',
+    margin: 16,
+    marginBottom: 8,
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  checkInButtonDisabled: {
+    opacity: 0.6,
+  },
+  checkInButtonText: {
+    color: '#FFF',
+    fontWeight: '600',
+    fontSize: 16,
+  },
+  status: {
+    textAlign: 'center',
+    color: '#666',
+    marginBottom: 8,
   },
   map: {
     flex: 1,
