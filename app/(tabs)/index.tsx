@@ -1,26 +1,15 @@
 import * as Location from 'expo-location';
+import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import MapView, { Marker } from 'react-native-maps';
-import {
-  ActivityIndicator,
-  FlatList,
-  RefreshControl,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
-import {
-  fetchNearbyCheckIns,
-  fuzzCoordinate,
-  insertCheckIn,
-  updateCheckInNote,
-  type CheckInRow,
-} from '../../lib/checkIns';
+import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSession } from '../../lib/auth-context';
+import { endCheckIn, fetchMyActiveCheckIn, fetchNearbyCheckIns, type CheckInRow } from '../../lib/checkIns';
+import { useCheckIn } from '../../lib/checkin-context';
 import { describeError } from '../../lib/errors';
 import { haversineMeters } from '../../lib/geo';
+import { useTheme } from '../../lib/theme';
 
 const NEARBY_RADIUS_METERS = 5000;
 
@@ -35,16 +24,20 @@ function timeAgo(timestamp: string): string {
 }
 
 export default function NearbyScreen() {
-  const [shareWithEveryone, setShareWithEveryone] = useState(false);
-  const [checkingIn, setCheckingIn] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
-  const [pendingCheckInId, setPendingCheckInId] = useState<string | null>(null);
-  const [note, setNote] = useState('');
-  const [savingNote, setSavingNote] = useState(false);
+  const theme = useTheme();
+  const { colors, type, space, radius, shadows, mode } = theme;
+  const insets = useSafeAreaInsets();
+  const { signOut } = useSession();
+  const router = useRouter();
+  const { refreshSignal } = useCheckIn();
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [nearby, setNearby] = useState<NearbyItem[]>([]);
+  const [activeCheckIn, setActiveCheckIn] = useState<CheckInRow | null>(null);
+  const [endingCheckIn, setEndingCheckIn] = useState(false);
+  const [wavedIds, setWavedIds] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setError(null);
@@ -59,12 +52,13 @@ export default function NearbyScreen() {
       const lng = position.coords.longitude;
       setUserLocation({ lat, lng });
 
-      const rows = await fetchNearbyCheckIns();
+      const [rows, mine] = await Promise.all([fetchNearbyCheckIns(), fetchMyActiveCheckIn()]);
       const withDistance = rows
         .map((row) => ({ ...row, distanceMeters: haversineMeters(lat, lng, row.lat, row.lng) }))
         .filter((row) => row.distanceMeters <= NEARBY_RADIUS_METERS)
         .sort((a, b) => a.distanceMeters - b.distanceMeters);
       setNearby(withDistance);
+      setActiveCheckIn(mine);
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -74,131 +68,150 @@ export default function NearbyScreen() {
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, refreshSignal]);
 
-  async function handleCheckIn() {
-    setStatus(null);
-    setCheckingIn(true);
+  async function handleEndCheckIn() {
+    if (!activeCheckIn) return;
+    setEndingCheckIn(true);
     try {
-      const { status: permissionStatus } = await Location.requestForegroundPermissionsAsync();
-      if (permissionStatus !== 'granted') {
-        setStatus('Location permission denied');
-        return;
-      }
-      const position = await Location.getCurrentPositionAsync({});
-      const fuzzed = fuzzCoordinate(position.coords.latitude, position.coords.longitude);
-      const checkIn = await insertCheckIn(fuzzed, shareWithEveryone ? 'everyone' : 'friends');
-      setStatus('Checked in!');
-      setPendingCheckInId(checkIn.id);
-      setNote('');
-      load();
+      await endCheckIn(activeCheckIn.id);
+      setActiveCheckIn(null);
     } catch (err) {
-      setStatus(describeError(err));
+      setError(describeError(err));
     } finally {
-      setCheckingIn(false);
+      setEndingCheckIn(false);
     }
   }
 
-  async function handleSaveNote() {
-    if (!pendingCheckInId) return;
-    setSavingNote(true);
-    try {
-      await updateCheckInNote(pendingCheckInId, note.trim());
-      setPendingCheckInId(null);
-    } catch (err) {
-      setStatus(describeError(err));
-    } finally {
-      setSavingNote(false);
-    }
+  function handleWave(id: string) {
+    // UI-only for now — no notification/persistence yet (CLAUDE.md still
+    // lists a lightweight "wave" as an open product question).
+    setWavedIds((prev) => new Set(prev).add(id));
+  }
+
+  async function handleSignOut() {
+    await signOut();
+    router.replace('/');
+  }
+
+  if (loading) {
+    return (
+      <View style={[styles.container, styles.center, { backgroundColor: colors.bg }]}>
+        <Text style={[type.body, { color: colors.text2 }]}>Loading…</Text>
+      </View>
+    );
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.visibilityRow}>
-        <Text style={styles.visibilityLabel}>Share with everyone nearby</Text>
-        <Switch value={shareWithEveryone} onValueChange={setShareWithEveryone} />
-      </View>
-      <TouchableOpacity
-        style={[styles.checkInButton, checkingIn && styles.checkInButtonDisabled]}
-        onPress={handleCheckIn}
-        disabled={checkingIn}
+    <View style={[styles.container, { backgroundColor: colors.bg }]}>
+      <MapView
+        style={StyleSheet.absoluteFill}
+        showsUserLocation
+        userInterfaceStyle={mode}
+        initialRegion={{
+          latitude: userLocation?.lat ?? 37.7955,
+          longitude: userLocation?.lng ?? -122.3937,
+          latitudeDelta: 0.07,
+          longitudeDelta: 0.07,
+        }}
       >
-        {checkingIn ? (
-          <ActivityIndicator color="#FFF" />
-        ) : (
-          <Text style={styles.checkInButtonText}>Check in</Text>
-        )}
-      </TouchableOpacity>
-      {status && <Text style={styles.status}>{status}</Text>}
-      {pendingCheckInId && (
-        <View style={styles.notePrompt}>
-          <Text style={styles.noteLabel}>What happened?</Text>
-          <TextInput
-            style={styles.noteInput}
-            placeholder="Grabbed coffee, said hi to a stranger…"
-            value={note}
-            onChangeText={setNote}
+        {nearby.map((item) => (
+          <Marker
+            key={item.id}
+            coordinate={{ latitude: item.lat, longitude: item.lng }}
+            title="Someone nearby"
+            description={`${Math.round(item.distanceMeters)}m away`}
           />
-          <View style={styles.noteButtons}>
-            <TouchableOpacity onPress={() => setPendingCheckInId(null)} style={styles.noteSkip}>
-              <Text style={styles.noteSkipText}>Skip</Text>
-            </TouchableOpacity>
+        ))}
+      </MapView>
+
+      <View style={[styles.topOverlay, { top: insets.top + space.sm, left: space.lg, right: space.lg }]}>
+        <View style={styles.topLinks}>
+          {/* Temporary, for testing dark mode before there's a real settings screen. */}
+          <TouchableOpacity
+            onPress={() => theme.setPreference(mode === 'dark' ? 'light' : 'dark')}
+            style={styles.signOut}
+          >
+            <Text style={[type.label, { color: colors.accentText }]}>
+              {mode === 'dark' ? 'Light mode' : 'Dark mode'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleSignOut} style={styles.signOut}>
+            <Text style={[type.label, { color: colors.danger }]}>Sign out</Text>
+          </TouchableOpacity>
+        </View>
+
+        {activeCheckIn && (
+          <View style={[styles.liveCard, { backgroundColor: colors.glass, borderRadius: radius.card }, shadows.card]}>
+            <View style={styles.liveRow}>
+              <View style={[styles.liveDot, { backgroundColor: colors.live, shadowColor: colors.liveGlow }]} />
+              <Text style={[type.headline, { color: colors.text }]}>You're checked in</Text>
+            </View>
+            <Text style={[type.label, { color: colors.text2 }]}>
+              {timeAgo(activeCheckIn.created_at)} · {activeCheckIn.visibility === 'everyone' ? 'Everyone nearby' : 'Friends only'}
+            </Text>
             <TouchableOpacity
-              onPress={handleSaveNote}
-              disabled={savingNote || !note.trim()}
-              style={[styles.noteSave, (savingNote || !note.trim()) && styles.checkInButtonDisabled]}
+              onPress={handleEndCheckIn}
+              disabled={endingCheckIn}
+              style={[styles.endButton, { backgroundColor: colors.raised, borderRadius: radius.button }]}
             >
-              {savingNote ? (
-                <ActivityIndicator color="#FFF" />
-              ) : (
-                <Text style={styles.noteSaveText}>Save</Text>
-              )}
+              <Text style={[type.button, { color: colors.text }]}>{endingCheckIn ? 'Ending…' : 'End'}</Text>
             </TouchableOpacity>
           </View>
+        )}
+      </View>
+
+      <View
+        style={[
+          styles.sheet,
+          { backgroundColor: colors.surface, borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet },
+          shadows.card,
+        ]}
+      >
+        <View style={[styles.handle, { backgroundColor: colors.lineStrong }]} />
+        <View style={styles.sheetHeaderRow}>
+          <Text style={[type.title, { color: colors.text }]}>Nearby now</Text>
+          <View style={[styles.chip, { backgroundColor: colors.accentSoft }]}>
+            <Text style={[type.label, { color: colors.accentText }]}>{nearby.length} within 5 km</Text>
+          </View>
         </View>
-      )}
-      {loading ? (
-        <ActivityIndicator style={styles.loading} />
-      ) : (
-        <>
-          <MapView
-            style={styles.map}
-            showsUserLocation
-            initialRegion={{
-              latitude: userLocation?.lat ?? 37.7955,
-              longitude: userLocation?.lng ?? -122.3937,
-              latitudeDelta: 0.07,
-              longitudeDelta: 0.07,
-            }}
-          >
-            {nearby.map((item) => (
-              <Marker
-                key={item.id}
-                coordinate={{ latitude: item.lat, longitude: item.lng }}
-                title="Someone nearby"
-                description={`${Math.round(item.distanceMeters)}m away`}
-              />
-            ))}
-          </MapView>
-          <FlatList
-            style={styles.list}
-            data={nearby}
-            keyExtractor={(item) => item.id}
-            refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}
-            renderItem={({ item }) => (
-              <View style={styles.row}>
-                <Text style={styles.name}>Someone</Text>
-                <Text style={styles.distance}>
-                  {Math.round(item.distanceMeters)}m away • {timeAgo(item.created_at)}
+        <FlatList
+          data={nearby}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item, index }) => (
+            <View style={styles.row}>
+              <View style={[styles.rowAvatar, { backgroundColor: colors.raised }]} />
+              <View style={styles.rowBody}>
+                <Text style={[type.headline, { color: colors.text }]}>Someone</Text>
+                <Text style={[type.caption, { color: colors.text2 }]}>
+                  {Math.round(item.distanceMeters)}m away · {timeAgo(item.created_at)}
                 </Text>
               </View>
-            )}
-            ListEmptyComponent={
-              <Text style={styles.empty}>{error ?? 'No one checked in nearby right now.'}</Text>
-            }
-          />
-        </>
-      )}
+              <TouchableOpacity
+                onPress={() => handleWave(item.id)}
+                disabled={wavedIds.has(item.id)}
+                style={[
+                  styles.waveButton,
+                  { borderRadius: radius.pill },
+                  index === 0
+                    ? { backgroundColor: colors.accent }
+                    : { backgroundColor: colors.raised },
+                ]}
+              >
+                <Text style={[type.label, { color: index === 0 ? colors.onAccent : colors.text }]}>
+                  {wavedIds.has(item.id) ? 'Waved' : 'Wave'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          ListEmptyComponent={
+            <Text style={[type.caption, { color: colors.text2, textAlign: 'center', marginTop: space.md }]}>
+              {error ?? 'No one checked in nearby right now.'}
+            </Text>
+          }
+          contentContainerStyle={{ paddingBottom: insets.bottom + 120 }}
+        />
+      </View>
     </View>
   );
 }
@@ -207,107 +220,89 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  visibilityRow: {
+  center: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topOverlay: {
+    position: 'absolute',
+    gap: 10,
+  },
+  topLinks: {
+    flexDirection: 'row',
+    alignSelf: 'flex-end',
+    gap: 16,
+  },
+  signOut: {
+    minHeight: 32,
+    justifyContent: 'center',
+  },
+  liveCard: {
+    padding: 14,
+    gap: 6,
+  },
+  liveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  liveDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  endButton: {
+    alignSelf: 'flex-start',
+    minHeight: 44,
+    paddingHorizontal: 16,
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    maxHeight: 340,
+    paddingTop: 10,
+    paddingHorizontal: 16,
+  },
+  handle: {
+    alignSelf: 'center',
+    width: 36,
+    height: 5,
+    borderRadius: 3,
+    marginBottom: 10,
+  },
+  sheetHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginHorizontal: 16,
-    marginTop: 12,
-  },
-  visibilityLabel: {
-    fontSize: 14,
-    color: '#444',
-  },
-  checkInButton: {
-    backgroundColor: '#1A1A1A',
-    margin: 16,
-    marginBottom: 8,
-    borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  checkInButtonDisabled: {
-    opacity: 0.6,
-  },
-  checkInButtonText: {
-    color: '#FFF',
-    fontWeight: '600',
-    fontSize: 16,
-  },
-  status: {
-    textAlign: 'center',
-    color: '#666',
     marginBottom: 8,
   },
-  notePrompt: {
-    marginHorizontal: 16,
-    marginBottom: 12,
-    padding: 12,
-    borderRadius: 8,
-    backgroundColor: '#F7F7F7',
-    gap: 8,
-  },
-  noteLabel: {
-    fontWeight: '600',
-  },
-  noteInput: {
-    borderWidth: 1,
-    borderColor: '#DDD',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: '#FFF',
-  },
-  noteButtons: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 12,
-  },
-  noteSkip: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-  },
-  noteSkipText: {
-    color: '#666',
-  },
-  noteSave: {
-    backgroundColor: '#1A1A1A',
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-  },
-  noteSaveText: {
-    color: '#FFF',
-    fontWeight: '600',
-  },
-  loading: {
-    marginTop: 24,
-  },
-  map: {
-    flex: 1,
-  },
-  list: {
-    maxHeight: 180,
-    borderTopWidth: 1,
-    borderTopColor: '#EEE',
+  chip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
   },
   row: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
+    alignItems: 'center',
+    gap: 12,
+    minHeight: 68,
+  },
+  rowAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+  },
+  rowBody: {
+    flex: 1,
+  },
+  waveButton: {
+    minHeight: 44,
     paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F2F2F2',
-  },
-  name: {
-    fontWeight: '600',
-  },
-  distance: {
-    color: '#888',
-  },
-  empty: {
-    textAlign: 'center',
-    color: '#888',
-    marginTop: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

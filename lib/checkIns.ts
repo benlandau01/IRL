@@ -51,9 +51,15 @@ export async function updateCheckInNote(id: string, note: string): Promise<void>
 }
 
 export async function fetchMyHistory(): Promise<CheckInRow[]> {
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError) throw userError;
+  if (!userData.user) throw new Error('Not signed in');
+
+  // Must filter to our own user_id explicitly — see fetchMyActiveCheckIn.
   const { data, error } = await supabase
     .from('check_ins')
     .select('*')
+    .eq('user_id', userData.user.id)
     .order('created_at', { ascending: false });
   if (error) throw error;
   return data ?? [];
@@ -64,11 +70,40 @@ export async function fetchNearbyCheckIns(): Promise<CheckInRow[]> {
   if (userError) throw userError;
   if (!userData.user) throw new Error('Not signed in');
 
+  // No visibility filter here on purpose — RLS already returns the union of
+  // "everyone" rows and friends' "friends" rows; we just exclude our own.
   const { data, error } = await supabase
     .from('check_ins')
     .select('*')
-    .eq('visibility', 'everyone')
     .neq('user_id', userData.user.id);
   if (error) throw error;
   return data ?? [];
+}
+
+export async function fetchMyActiveCheckIn(): Promise<CheckInRow | null> {
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError) throw userError;
+  if (!userData.user) throw new Error('Not signed in');
+
+  // Must filter to our own user_id explicitly — RLS here is a union of
+  // several permissive policies (own, everyone-visible, friends-visible),
+  // not a restriction to "mine only".
+  const { data, error } = await supabase
+    .from('check_ins')
+    .select('*')
+    .eq('user_id', userData.user.id)
+    .gt('expires_at', new Date().toISOString())
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function endCheckIn(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('check_ins')
+    .update({ expires_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw error;
 }

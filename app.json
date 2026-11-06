@@ -6,7 +6,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true
     },
@@ -29,7 +29,8 @@
         {
           "locationWhenInUsePermission": "Allow IRL to use your location to check you in nearby."
         }
-      ]
+      ],
+      "expo-font"
     ]
   }
 }
